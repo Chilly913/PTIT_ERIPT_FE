@@ -1,0 +1,123 @@
+<script setup lang="ts">
+definePageMeta({ layout: 'auth' })
+
+const auth = useAuthStore()
+const loading = ref(false)
+const error = ref('')
+const agreed = ref(false)
+const form = reactive({
+  name: '',
+  email: '',
+  password: '',
+  password_confirmation: '',
+})
+
+async function submit() {
+  error.value = ''
+  if (!form.name.trim() || !form.email.trim()) {
+    error.value = 'Vui lòng nhập họ tên và email.'
+    return
+  }
+  if (form.password.length < 6) {
+    error.value = 'Mật khẩu phải có ít nhất 6 ký tự.'
+    return
+  }
+  if (form.password !== form.password_confirmation) {
+    error.value = 'Mật khẩu xác nhận không khớp.'
+    return
+  }
+  if (!agreed.value) {
+    error.value = 'Vui lòng đồng ý điều khoản trước khi tạo tài khoản.'
+    return
+  }
+
+  loading.value = true
+  try {
+    const result = await auth.register(form)
+    await navigateTo(`/verify-email?email=${encodeURIComponent(result.email)}&registered=1`)
+  }
+  catch (requestError: any) {
+    error.value = requestError?.data?.message || 'Đăng ký thất bại. Vui lòng thử lại.'
+  }
+  finally {
+    loading.value = false
+  }
+}
+</script>
+
+<template>
+  <div class="auth-panel">
+    <section class="auth-story">
+      <span class="story-label">ERIPT LMS</span>
+      <h1>Tạo tài khoản để bắt đầu học.</h1>
+      <p>Dùng một tài khoản để học khóa học, làm bài kiểm tra và xem kết quả trên ERIPT LMS.</p>
+    </section>
+
+    <AuthPanelCard>
+        <AuthSideHeader />
+        <div class="auth-heading">
+          <span>Đăng ký</span>
+          <h2>Tạo tài khoản mới</h2>
+          <p>Điền thông tin bên dưới để tạo tài khoản.</p>
+        </div>
+
+        <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
+
+        <form class="auth-form" @submit.prevent="submit">
+          <label>
+            <span>Họ và tên</span>
+            <InputText v-model="form.name" placeholder="Nguyễn Văn A" autocomplete="name" fluid />
+          </label>
+          <label>
+            <span>Email</span>
+            <IconField>
+              <InputIcon class="pi pi-envelope" />
+              <InputText v-model="form.email" type="email" placeholder="name@example.com" autocomplete="email" fluid />
+            </IconField>
+          </label>
+          <label>
+            <span>Mật khẩu</span>
+            <Password v-model="form.password" placeholder="Tối thiểu 6 ký tự" :feedback="false" toggle-mask autocomplete="new-password" fluid />
+          </label>
+          <label>
+            <span>Xác nhận mật khẩu</span>
+            <Password v-model="form.password_confirmation" placeholder="Nhập lại mật khẩu" :feedback="false" toggle-mask autocomplete="new-password" fluid />
+          </label>
+          <label class="notice agree">
+            <input v-model="agreed" type="checkbox">
+            <span>Tôi đồng ý với các điều khoản sử dụng của ERIPT LMS.</span>
+          </label>
+          <Button type="submit" label="Tạo tài khoản" icon="pi pi-user-plus" :loading="loading" fluid />
+        </form>
+
+        <AuthGoogleButton label="Đăng ký / Đăng nhập bằng Google" @error="error = $event" />
+
+        <p class="auth-foot">Đã có tài khoản? <NuxtLink to="/login">Đăng nhập</NuxtLink></p>
+    </AuthPanelCard>
+  </div>
+</template>
+
+<style scoped>
+.agree {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.agree input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+
+.agree span {
+  color: var(--text-muted);
+  font-size: .86rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+</style>

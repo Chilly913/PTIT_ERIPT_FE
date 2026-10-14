@@ -1,0 +1,811 @@
+﻿<script setup lang="ts">
+import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
+import { matchesAny, normalizeSearch } from '~/utils/search'
+
+definePageMeta({
+  layout: 'admin',
+  middleware: ['auth', 'admin'],
+})
+
+interface CourseItem { id: number, title: string, searchKey?: string }
+interface AdminClass { id: number, code: string, name: string }
+interface ExamItem {
+  id: number
+  title: string
+  description?: string | null
+  type?: string | null
+  duration?: number | null
+  pass_score?: number | null
+  max_attempts?: number | null
+  status?: string | null
+  starts_at?: string | null
+  ends_at?: string | null
+  exam_enrollments_count?: number
+  quiz?: { id?: number } | null
+  course_id?: number | null
+  course?: { id: number, title: string } | null
+  proctoring_enabled?: boolean
+  room?: string | null
+}
+
+const { t, locale } = useI18n()
+const toast = useToast()
+const confirm = useConfirm()
+
+const classes = ref<AdminClass[]>([])
+const enrollExamId = ref<number | null>(null)
+const enrollClassId = ref<number | null>(null)
+const enrolling = ref(false)
+const enrollDialog = computed({
+  get: () => enrollExamId.value !== null,
+  set: (v: boolean) => { if (!v) enrollExamId.value = null },
+})
+
+const activeScope = ref<'all' | 'standalone' | 'course'>('all')
+const courses = ref<CourseItem[]>([])
+const exams = ref<ExamItem[]>([])
+const selectedCourseId = ref<number | null>(null)
+const loadingCourses = ref(false)
+const loading = ref(false)
+const tableSearch = ref('')
+const statusFilter = ref<string | null>(null)
+const typeFilter = ref<string | null>(null)
+const proctoringFilter = ref<string | null>(null)
+const dateFrom = ref('')
+const dateTo = ref('')
+
+const modalOpen = ref(false)
+const modalMode = ref<'create' | 'edit'>('create')
+const editing = ref<ExamItem | null>(null)
+const saving = ref(false)
+
+const form = reactive({
+  title: '',
+  description: '',
+  status: 'draft',
+  duration: 60,
+  pass_score: 70,
+  max_attempts: 1,
+  shuffle_questions: false,
+  shuffle_answers: false,
+  proctoring_enabled: false,
+  course_id: null as number | null,
+  starts_at: null as Date | null,
+  ends_at: null as Date | null,
+})
+
+let hydratingSchedule = false
+
+const statusOptions = computed(() => [
+  { label: t('admin.reports.examStatuses.draft'), value: 'draft' },
+  { label: t('admin.reports.examStatuses.scheduled'), value: 'scheduled' },
+  { label: t('admin.reports.examStatuses.active'), value: 'active' },
+  { label: t('admin.reports.examStatuses.closed'), value: 'closed' },
+  { label: t('admin.reports.examStatuses.archived'), value: 'archived' },
+])
+
+const scopeOptions = computed(() => [
+  { label: t('admin.quiz.allScopes'), value: 'all' },
+  { label: t('admin.quiz.standalone'), value: 'standalone' },
+  { label: t('admin.quiz.courseExams'), value: 'course' },
+])
+
+const typeOptions = computed(() => [
+  { label: t('admin.quiz.typeCourseFinal'), value: 'course_final' },
+  { label: t('admin.quiz.typeStandalone'), value: 'standalone' },
+])
+
+const proctoringOptions = computed(() => [
+  { label: t('admin.quiz.proctoringOn'), value: '1' },
+  { label: t('admin.quiz.proctoringOff'), value: '0' },
+])
+
+const courseOptions = computed(() => courses.value.map(course => ({
+  ...course,
+  searchKey: normalizeSearch(course.title),
+})))
+
+const classOptions = computed(() => classes.value.map(row => ({
+  ...row,
+  label: `${row.code} — ${row.name || ''}`.trim(),
+  searchKey: normalizeSearch(`${row.code} ${row.name || ''}`),
+})))
+
+const filtered = computed(() => {
+  const q = tableSearch.value
+  return exams.value.filter((exam) => {
+    if (activeScope.value === 'standalone' && exam.course_id) return false
+    if (activeScope.value === 'course' && !exam.course_id) return false
+    if (selectedCourseId.value && (exam.course_id || exam.course?.id) !== selectedCourseId.value) return false
+    if (statusFilter.value && (exam.status || 'draft') !== statusFilter.value) return false
+    if (typeFilter.value && (exam.type || 'standalone') !== typeFilter.value) return false
+    if (proctoringFilter.value === '1' && !exam.proctoring_enabled) return false
+    if (proctoringFilter.value === '0' && exam.proctoring_enabled) return false
+    if (dateFrom.value) {
+      const start = (exam.starts_at || '').slice(0, 10)
+      if (!start || start < dateFrom.value) return false
+    }
+    if (dateTo.value) {
+      const start = (exam.starts_at || '').slice(0, 10)
+      if (!start || start > dateTo.value) return false
+    }
+    if (!q.trim()) return true
+    return matchesAny(
+      q,
+      exam.title,
+      exam.description,
+      exam.course?.title,
+      exam.room,
+      statusLabel(exam.status),
+      exam.type === 'course_final' ? t('admin.quiz.typeCourseFinal') : t('admin.quiz.typeStandalone'),
+    )
+  })
+})
+
+const numberLocale = computed(() => (locale.value === 'en' ? 'en-US' : 'vi-VN'))
+
+function fmtDateTime(value?: string | null) {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat(numberLocale.value, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(value))
+}
+
+function parseApiDate(value?: string | null): Date | null {
+  if (!value) return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function toIso(d: Date | null) {
+  return d ? d.toISOString() : null
+}
+
+function applyEndFromDuration() {
+  if (hydratingSchedule || !form.starts_at || !form.duration) return
+  form.ends_at = new Date(form.starts_at.getTime() + Number(form.duration) * 60 * 1000)
+}
+
+watch(() => [form.starts_at, form.duration] as const, applyEndFromDuration)
+
+function statusLabel(status?: string | null) {
+  const key = `admin.reports.examStatuses.${status || 'draft'}`
+  const translated = t(key)
+  return translated === key ? (status || 'draft') : translated
+}
+
+function statusTone(status?: string | null) {
+  if (status === 'active') return 'tone-ok'
+  if (status === 'scheduled') return 'tone-info'
+  if (status === 'closed') return 'tone-danger'
+  if (status === 'archived') return 'tone-muted'
+  return 'tone-warn'
+}
+
+async function loadCourses() {
+  loadingCourses.value = true
+  try {
+    const res = await useApi<{ data: CourseItem[] }>('/admin/courses?per_page=500')
+    courses.value = res.data || []
+  }
+  catch (error: any) {
+    toast.add({
+      severity: 'error',
+      summary: t('admin.quiz.coursesError'),
+      detail: error?.data?.message,
+      life: 3500,
+    })
+  }
+  finally {
+    loadingCourses.value = false
+  }
+}
+
+async function loadExams() {
+  loading.value = true
+  try {
+    exams.value = await useApi<ExamItem[]>('/admin/exams')
+  }
+  catch (error: any) {
+    toast.add({
+      severity: 'error',
+      summary: t('admin.quiz.loadError'),
+      detail: error?.data?.message,
+      life: 3500,
+    })
+  }
+  finally {
+    loading.value = false
+  }
+}
+
+function resetFilters() {
+  activeScope.value = 'all'
+  selectedCourseId.value = null
+  statusFilter.value = null
+  typeFilter.value = null
+  proctoringFilter.value = null
+  dateFrom.value = ''
+  dateTo.value = ''
+  tableSearch.value = ''
+}
+
+function resetForm() {
+  form.title = ''
+  form.description = ''
+  form.status = 'draft'
+  form.duration = 60
+  form.pass_score = 70
+  form.max_attempts = 1
+  form.shuffle_questions = false
+  form.shuffle_answers = false
+  form.proctoring_enabled = false
+  form.course_id = selectedCourseId.value
+  form.starts_at = null
+  form.ends_at = null
+}
+
+function examWritePath(exam: ExamItem) {
+  return exam.course_id
+    ? `/courses/${exam.course_id}/exams/${exam.id}`
+    : `/exams/${exam.id}`
+}
+
+function openCreate() {
+  modalMode.value = 'create'
+  editing.value = null
+  resetForm()
+  if (activeScope.value === 'course') form.course_id = selectedCourseId.value
+  modalOpen.value = true
+}
+
+function openEdit(exam: ExamItem) {
+  modalMode.value = 'edit'
+  editing.value = exam
+  hydratingSchedule = true
+  form.title = exam.title
+  form.description = exam.description || ''
+  form.status = exam.status || 'draft'
+  form.duration = exam.duration ?? 60
+  form.pass_score = exam.pass_score ?? 70
+  form.max_attempts = exam.max_attempts ?? 1
+  form.shuffle_questions = false
+  form.shuffle_answers = false
+  form.proctoring_enabled = !!exam.proctoring_enabled
+  form.course_id = exam.course_id || selectedCourseId.value
+  form.starts_at = parseApiDate(exam.starts_at)
+  form.ends_at = parseApiDate(exam.ends_at)
+  modalOpen.value = true
+  nextTick(() => { hydratingSchedule = false })
+}
+
+async function saveExam() {
+  if (!form.title.trim()) {
+    toast.add({ severity: 'warn', summary: t('admin.quiz.titleRequired'), life: 2500 })
+    return
+  }
+  if (activeScope.value === 'course' && modalMode.value === 'create' && !form.course_id) {
+    toast.add({ severity: 'warn', summary: t('admin.quiz.courseRequired'), life: 2500 })
+    return
+  }
+
+  if (form.starts_at && form.ends_at && form.ends_at.getTime() <= form.starts_at.getTime()) {
+    toast.add({ severity: 'warn', summary: t('admin.quiz.endsBeforeStart'), life: 2800 })
+    return
+  }
+
+  saving.value = true
+  try {
+    const body = {
+      title: form.title.trim(),
+      description: form.description || null,
+      status: form.status,
+      duration: form.duration,
+      pass_score: form.pass_score,
+      max_attempts: form.max_attempts,
+      shuffle_questions: form.shuffle_questions,
+      shuffle_answers: form.shuffle_answers,
+      proctoring_enabled: form.proctoring_enabled,
+      starts_at: toIso(form.starts_at),
+      ends_at: toIso(form.ends_at),
+    }
+
+    if (modalMode.value === 'create') {
+      if (form.course_id) {
+        await useApi(`/courses/${form.course_id}/exams`, { method: 'POST', body })
+      }
+      else {
+        await useApi('/exams/standalone', { method: 'POST', body })
+      }
+      toast.add({ severity: 'success', summary: t('admin.quiz.created'), life: 2500 })
+    }
+    else if (editing.value) {
+      await useApi(examWritePath(editing.value), { method: 'PUT', body })
+      toast.add({ severity: 'success', summary: t('admin.quiz.updated'), life: 2500 })
+    }
+
+    modalOpen.value = false
+    await loadExams()
+  }
+  catch (error: any) {
+    toast.add({
+      severity: 'error',
+      summary: t('admin.quiz.saveError'),
+      detail: error?.data?.message,
+      life: 3500,
+    })
+  }
+  finally {
+    saving.value = false
+  }
+}
+
+function askDelete(exam: ExamItem) {
+  confirm.require({
+    message: t('admin.quiz.deleteConfirm', { title: exam.title }),
+    header: t('admin.quiz.deleteTitle'),
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await useApi(examWritePath(exam), { method: 'DELETE' })
+        toast.add({ severity: 'success', summary: t('admin.quiz.deleted'), life: 2500 })
+        await loadExams()
+      }
+      catch (error: any) {
+        toast.add({
+          severity: 'error',
+          summary: t('admin.quiz.deleteError'),
+          detail: error?.data?.message,
+          life: 3500,
+        })
+      }
+    },
+  })
+}
+
+function goCreatePage() {
+  const type = selectedCourseId.value || activeScope.value === 'course' ? 'course_final' : 'standalone'
+  navigateTo(`/admin/quiz/create?type=${type}`)
+}
+
+async function loadClasses() {
+  try {
+    const res = await useApi<any>('/admin/academic/administrative-classes', { query: { per_page: 100 } })
+    classes.value = Array.isArray(res) ? res : (res.data || [])
+  }
+  catch {
+    classes.value = []
+  }
+}
+
+function openEnroll(exam: ExamItem) {
+  enrollExamId.value = exam.id
+  enrollClassId.value = null
+}
+
+async function enrollClass() {
+  if (!enrollExamId.value || !enrollClassId.value) return
+  enrolling.value = true
+  try {
+    const res = await useApi<{ message?: string }>(`/exams/${enrollExamId.value}/enroll-class`, {
+      method: 'POST',
+      body: { administrative_class_id: enrollClassId.value },
+    })
+    toast.add({ severity: 'success', summary: res.message || t('admin.quiz.enrollOk'), life: 3000 })
+    enrollExamId.value = null
+    enrollClassId.value = null
+    await loadExams()
+  }
+  catch (error: any) {
+    toast.add({
+      severity: 'error',
+      summary: t('admin.quiz.enrollError'),
+      detail: error?.data?.message,
+      life: 3500,
+    })
+  }
+  finally {
+    enrolling.value = false
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([loadCourses(), loadClasses()])
+  await loadExams()
+})
+</script>
+
+<template>
+  <div class="page quiz-page">
+
+    <section class="table-panel">
+      <div class="filter-bar">
+        <div class="filter-title">
+          <i class="pi pi-filter" />
+          <strong>{{ t('admin.quiz.filters') }}</strong>
+        </div>
+        <div class="filter-grid">
+          <label class="field">
+            <span>{{ t('admin.quiz.scope') }}</span>
+            <Select
+              v-model="activeScope"
+              :options="scopeOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+            />
+          </label>
+          <label class="field">
+            <span>{{ t('admin.quiz.course') }}</span>
+            <Select
+              v-model="selectedCourseId"
+              :options="courseOptions"
+              option-label="title"
+              option-value="id"
+              :filter-fields="['title', 'searchKey']"
+              filter
+              show-clear
+              :loading="loadingCourses"
+              :placeholder="t('admin.quiz.selectCourse')"
+              class="w-full"
+            />
+          </label>
+          <label class="field">
+            <span>{{ t('admin.quiz.examType') }}</span>
+            <Select
+              v-model="typeFilter"
+              :options="typeOptions"
+              option-label="label"
+              option-value="value"
+              show-clear
+              :placeholder="t('common.all')"
+              class="w-full"
+            />
+          </label>
+          <label class="field">
+            <span>{{ t('admin.quiz.status') }}</span>
+            <Select
+              v-model="statusFilter"
+              :options="statusOptions"
+              option-label="label"
+              option-value="value"
+              show-clear
+              :placeholder="t('common.all')"
+              class="w-full"
+            />
+          </label>
+          <label class="field">
+            <span>{{ t('admin.quiz.proctoring') }}</span>
+            <Select
+              v-model="proctoringFilter"
+              :options="proctoringOptions"
+              option-label="label"
+              option-value="value"
+              show-clear
+              :placeholder="t('common.all')"
+              class="w-full"
+            />
+          </label>
+          <label class="field">
+            <span>{{ t('admin.quiz.dateFrom') }}</span>
+            <input v-model="dateFrom" type="date" class="date-input">
+          </label>
+          <label class="field">
+            <span>{{ t('admin.quiz.dateTo') }}</span>
+            <input v-model="dateTo" type="date" class="date-input">
+          </label>
+        </div>
+        <div class="filter-actions">
+          <Button :label="t('admin.quiz.apply')" icon="pi pi-filter" size="small" @click="loadExams" />
+          <Button
+            :label="t('admin.quiz.reset')"
+            icon="pi pi-times"
+            size="small"
+            severity="secondary"
+            text
+            @click="resetFilters"
+          />
+        </div>
+      </div>
+
+      <div class="table-toolbar">
+        <div class="toolbar-left">
+          <IconField>
+            <InputIcon class="pi pi-search" />
+            <InputText v-model="tableSearch" :placeholder="t('admin.quiz.searchPh')" />
+          </IconField>
+          <strong>{{ t('admin.users.result', { n: filtered.length }) }}</strong>
+        </div>
+        <div class="toolbar-actions">
+          <Button
+            :label="t('admin.quiz.add')"
+            icon="pi pi-plus"
+            size="small"
+            @click="openCreate"
+          />
+          <Button
+            :label="t('admin.quiz.builder')"
+            icon="pi pi-cog"
+            size="small"
+            severity="secondary"
+            outlined
+            @click="goCreatePage"
+          />
+          <Button icon="pi pi-refresh" severity="secondary" text rounded :loading="loading" @click="loadExams" />
+        </div>
+      </div>
+
+      <DataTable
+        :value="filtered"
+        data-key="id"
+        :loading="loading"
+        paginator
+        :rows="15"
+        :rows-per-page-options="[10, 15, 25]"
+        striped-rows
+      >
+        <Column :header="t('admin.users.stt')" style="width:4rem">
+          <template #body="{ index }">{{ index + 1 }}</template>
+        </Column>
+        <Column field="title" :header="t('admin.quiz.examTitle')" sortable style="min-width:220px">
+          <template #body="{ data }">
+            <div class="exam-cell">
+              <strong>{{ data.title }}</strong>
+              <small>{{ data.course?.title || t('admin.quiz.noCourse') }}</small>
+            </div>
+          </template>
+        </Column>
+        <Column field="type" :header="t('admin.quiz.examType')" sortable style="min-width:120px">
+          <template #body="{ data }">
+            {{ data.type === 'course_final' ? t('admin.quiz.typeCourseFinal') : t('admin.quiz.typeStandalone') }}
+          </template>
+        </Column>
+        <Column field="duration" :header="t('admin.quiz.duration')" sortable style="min-width:100px">
+          <template #body="{ data }">{{ data.duration ?? 0 }} {{ t('admin.quiz.minutes') }}</template>
+        </Column>
+        <Column field="pass_score" :header="t('admin.quiz.passScore')" sortable style="min-width:90px">
+          <template #body="{ data }">{{ data.pass_score ?? 0 }}%</template>
+        </Column>
+        <Column field="status" :header="t('admin.quiz.status')" sortable style="min-width:110px">
+          <template #body="{ data }">
+            <div class="status-cell">
+              <span class="pill" :class="statusTone(data.status)">{{ statusLabel(data.status) }}</span>
+              <Tag v-if="data.proctoring_enabled" :value="t('admin.quiz.faceCheckOn')" severity="warn" />
+            </div>
+          </template>
+        </Column>
+        <Column :header="t('admin.quiz.enrolled')" style="min-width:90px">
+          <template #body="{ data }">{{ data.exam_enrollments_count ?? '—' }}</template>
+        </Column>
+        <Column :header="t('admin.quiz.schedule')" style="min-width:220px">
+          <template #body="{ data }">
+            <div class="schedule-cell">
+              <span>{{ t('admin.quiz.startsAt') }}: {{ fmtDateTime(data.starts_at) }}</span>
+              <span>{{ t('admin.quiz.endsAt') }}: {{ fmtDateTime(data.ends_at) }}</span>
+            </div>
+          </template>
+        </Column>
+        <Column :header="t('admin.users.actions')" style="width:12rem">
+          <template #body="{ data }">
+            <Button
+              icon="pi pi-chart-bar"
+              text
+              rounded
+              severity="info"
+              :aria-label="t('admin.quiz.results')"
+              :title="t('admin.quiz.results')"
+              @click="navigateTo(`/admin/quiz/${data.id}/results`)"
+            />
+            <Button
+              icon="pi pi-users"
+              text
+              rounded
+              severity="help"
+              :aria-label="t('admin.quiz.enrollClass')"
+              :title="t('admin.quiz.enrollClass')"
+              @click="openEnroll(data)"
+            />
+            <Button icon="pi pi-pencil" text rounded severity="secondary" :aria-label="t('admin.quiz.edit')" @click="openEdit(data)" />
+            <Button icon="pi pi-trash" text rounded severity="danger" :aria-label="t('admin.quiz.deleteTitle')" @click="askDelete(data)" />
+          </template>
+        </Column>
+        <template #empty>
+          <div class="empty">
+            {{ t('common.noData') }}
+          </div>
+        </template>
+      </DataTable>
+    </section>
+
+    <Dialog
+      v-model:visible="modalOpen"
+      modal
+      :header="modalMode === 'create' ? t('admin.quiz.add') : t('admin.quiz.edit')"
+      :style="{ width: 'min(720px, 96vw)' }"
+      :dismissable-mask="true"
+    >
+      <div class="modal-grid">
+        <label v-if="modalMode === 'create'" class="field full">
+          <span>{{ t('admin.quiz.course') }}</span>
+          <Select
+            v-model="form.course_id"
+            :options="courseOptions"
+            option-label="title"
+            option-value="id"
+            :filter-fields="['title', 'searchKey']"
+            filter
+            show-clear
+            class="w-full"
+          />
+        </label>
+        <label class="field full">
+          <span>{{ t('admin.quiz.examTitle') }} *</span>
+          <InputText v-model="form.title" class="w-full" />
+        </label>
+        <label class="field full">
+          <span>{{ t('admin.quiz.description') }}</span>
+          <CommonRichTextEditor v-model="form.description" height="180px" />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.quiz.status') }}</span>
+          <Select
+            v-model="form.status"
+            :options="statusOptions"
+            option-label="label"
+            option-value="value"
+            class="w-full"
+          />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.quiz.duration') }}</span>
+          <InputNumber v-model="form.duration" :min="0" suffix=" min" class="w-full" />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.quiz.passScore') }}</span>
+          <InputNumber v-model="form.pass_score" :min="0" :max="100" suffix="%" class="w-full" />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.quiz.maxAttempts') }}</span>
+          <InputNumber v-model="form.max_attempts" :min="1" :max="99" class="w-full" />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.quiz.startsAt') }}</span>
+          <DatePicker
+            v-model="form.starts_at"
+            show-time
+            hour-format="24"
+            show-icon
+            fluid
+            date-format="dd/mm/yy"
+            class="w-full"
+          />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.quiz.endsAt') }}</span>
+          <DatePicker
+            v-model="form.ends_at"
+            show-time
+            hour-format="24"
+            show-icon
+            fluid
+            date-format="dd/mm/yy"
+            class="w-full"
+          />
+        </label>
+        <p class="schedule-hint">{{ t('admin.quiz.scheduleHint') }}</p>
+        <label class="field switch-field">
+          <span>{{ t('admin.quiz.shuffleQuestions') }}</span>
+          <ToggleSwitch v-model="form.shuffle_questions" />
+        </label>
+        <label class="field switch-field">
+          <span>{{ t('admin.quiz.shuffleAnswers') }}</span>
+          <ToggleSwitch v-model="form.shuffle_answers" />
+        </label>
+        <label class="field switch-field full">
+          <span>
+            {{ t('admin.quiz.faceCheck') }}
+            <small class="switch-hint">{{ t('admin.quiz.faceCheckHint') }}</small>
+          </span>
+          <ToggleSwitch v-model="form.proctoring_enabled" />
+        </label>
+      </div>
+      <template #footer>
+        <Button :label="t('common.cancel')" severity="secondary" text @click="modalOpen = false" />
+        <Button :label="t('common.save')" icon="pi pi-check" :loading="saving" @click="saveExam" />
+      </template>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="enrollDialog"
+      modal
+      :header="t('admin.quiz.enrollClass')"
+      :style="{ width: 'min(420px, 95vw)' }"
+    >
+      <label class="field">
+        <span>{{ t('admin.quiz.adminClass') }}</span>
+        <Select
+          v-model="enrollClassId"
+          :options="classOptions"
+          option-label="label"
+          option-value="id"
+          :filter-fields="['label', 'code', 'name', 'searchKey']"
+          filter
+          class="w-full"
+          :placeholder="t('admin.quiz.selectClass')"
+        />
+      </label>
+      <template #footer>
+        <Button :label="t('common.cancel')" severity="secondary" text @click="enrollExamId = null" />
+        <Button :label="t('admin.quiz.enroll')" icon="pi pi-users" :loading="enrolling" @click="enrollClass" />
+      </template>
+    </Dialog>
+  </div>
+</template>
+
+<style scoped>
+.quiz-page { gap: 14px; }
+
+.table-panel {
+  border: 1px solid var(--border); border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(8px); padding: 12px;
+}
+.filter-bar { margin-bottom: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-subtle); }
+.filter-title { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.filter-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field > span { color: var(--text-muted); font-size: .72rem; font-weight: 700; }
+.w-full { width: 100%; }
+.date-input {
+  width: 100%; height: 2.6rem; padding: 0 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--surface); color: inherit; font: inherit;
+}
+
+.table-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.toolbar-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.toolbar-left strong { font-size: .92rem; white-space: nowrap; }
+.toolbar-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.exam-cell strong { display: block; }
+.exam-cell small {
+  display: block; color: var(--text-muted); font-size: .78rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28rem;
+}
+
+.pill {
+  display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px;
+  font-size: .74rem; font-weight: 700; white-space: nowrap;
+}
+.tone-ok { background: #dcfce7; color: #15803d; }
+.tone-info { background: #e0f2fe; color: #0369a1; }
+.tone-warn { background: #fef9c3; color: #a16207; }
+.tone-danger { background: #fee2e2; color: #b91c1c; }
+.tone-muted { background: var(--surface-hover); color: var(--text-muted); }
+
+.empty { padding: 40px; color: var(--text-muted); text-align: center; }
+.modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field.full { grid-column: 1 / -1; }
+.schedule-hint {
+  grid-column: 1 / -1; margin: -4px 0 4px; color: var(--text-muted);
+  font-size: .78rem; font-weight: 500;
+}
+.schedule-cell { display: flex; flex-direction: column; gap: 2px; font-size: .82rem; line-height: 1.35; }
+.switch-field { flex-direction: row; align-items: center; justify-content: space-between; }
+.switch-hint { display: block; margin-top: 2px; font-weight: 500; color: var(--text-muted); text-transform: none; }
+.status-cell { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+@media (max-width: 720px) {
+  .modal-grid { grid-template-columns: 1fr; }
+}
+</style>
