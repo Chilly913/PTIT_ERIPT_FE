@@ -47,53 +47,73 @@ async function submit() {
 
 <template>
   <div class="auth-panel">
-    <section class="auth-story">
-      <span class="story-label">ERIPT LMS</span>
-      <h1>Tạo tài khoản để bắt đầu học.</h1>
-      <p>Dùng một tài khoản để học khóa học, làm bài kiểm tra và xem kết quả trên ERIPT LMS.</p>
-    </section>
+    <div class="auth-card">
+      <div class="auth-card-scroll">
+        <div class="auth-brand">
+          <img class="auth-brand-img" src="/images/logo.png" alt="Logo" />
+          <div class="auth-brand-text">
+            ERIPT LMS
+            <small>University Name &amp; Logo</small>
+          </div>
+        </div>
 
-    <AuthPanelCard>
-        <AuthSideHeader />
         <div class="auth-heading">
           <span>Đăng ký</span>
           <h2>Tạo tài khoản mới</h2>
-          <p>Điền thông tin bên dưới để tạo tài khoản.</p>
+          <p>Điền thông tin bên dưới để bắt đầu học tập trên ERIPT LMS.</p>
         </div>
 
-        <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
+        <div v-if="error" class="notice">{{ error }}</div>
 
         <form class="auth-form" @submit.prevent="submit">
           <label>
             <span>Họ và tên</span>
-            <InputText v-model="form.name" placeholder="Nguyễn Văn A" autocomplete="name" fluid />
+            <span class="auth-field-uni">University Name</span>
+            <InputText v-model="form.name" placeholder="Nguyễn Văn A" autocomplete="name" autoFocus />
+            <span class="auth-field-desc">Họ tên đầy đủ sẽ hiển thị trên chứng chỉ và hồ sơ học tập.</span>
           </label>
+
           <label>
             <span>Email</span>
-            <IconField>
-              <InputIcon class="pi pi-envelope" />
-              <InputText v-model="form.email" type="email" placeholder="name@example.com" autocomplete="email" fluid />
-            </IconField>
+            <span class="auth-field-uni">University Name</span>
+            <InputText v-model="form.email" type="email" placeholder="email@example.com" autocomplete="email" />
+            <span class="auth-field-desc">Email dùng để đăng nhập, khôi phục mật khẩu và nhận thông báo.</span>
           </label>
+
           <label>
             <span>Mật khẩu</span>
-            <Password v-model="form.password" placeholder="Tối thiểu 6 ký tự" :feedback="false" toggle-mask autocomplete="new-password" fluid />
+            <span class="auth-field-uni">University Name</span>
+            <Password v-model="form.password" placeholder="••••••••" :feedback="false" toggle-mask autocomplete="new-password" />
+            <span class="auth-field-desc">Tối thiểu 6 ký tự. Mật khẩu bảo vệ tài khoản học tập của bạn.</span>
           </label>
+
           <label>
             <span>Xác nhận mật khẩu</span>
-            <Password v-model="form.password_confirmation" placeholder="Nhập lại mật khẩu" :feedback="false" toggle-mask autocomplete="new-password" fluid />
+            <span class="auth-field-uni">University Name</span>
+            <Password v-model="form.password_confirmation" placeholder="••••••••" :feedback="false" toggle-mask autocomplete="new-password" />
+            <span class="auth-field-desc">Nhập lại mật khẩu để xác nhận.</span>
           </label>
+
           <label class="notice agree">
             <input v-model="agreed" type="checkbox">
             <span>Tôi đồng ý với các điều khoản sử dụng của ERIPT LMS.</span>
           </label>
-          <Button type="submit" label="Tạo tài khoản" icon="pi pi-user-plus" :loading="loading" fluid />
+
+          <Button type="submit" label="Tạo tài khoản" icon="pi pi-user-plus" :loading="loading" />
         </form>
 
-        <AuthGoogleButton label="Đăng ký / Đăng nhập bằng Google" @error="error = $event" />
+        <div class="google-auth">
+          <div class="auth-divider"><span>hoặc</span></div>
+          <AuthGoogleButton label="Đăng ký / Đăng nhập bằng Google" @error="error = $event" />
+        </div>
 
         <p class="auth-foot">Đã có tài khoản? <NuxtLink to="/login">Đăng nhập</NuxtLink></p>
-    </AuthPanelCard>
+
+        <div class="auth-brand-footer">
+          <span>ERIPT LMS</span> · University Name &amp; Logo
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -115,7 +135,7 @@ async function submit() {
 }
 
 .agree span {
-  color: var(--text-muted);
+  color: color-mix(in srgb, #fff 80%, transparent);
   font-size: .86rem;
   font-weight: 400;
   line-height: 1.5;

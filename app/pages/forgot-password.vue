@@ -32,19 +32,23 @@ async function submit() {
 
 <template>
   <div class="auth-panel">
-    <section class="auth-story">
-      <span class="story-label">Khôi phục truy cập</span>
-      <h1>Chúng tôi sẽ giúp bạn lấy lại quyền truy cập nhanh chóng.</h1>
-      <p>Nhập email đã đăng ký để nhận hướng dẫn đặt lại mật khẩu an toàn.</p>
-    </section>
-
-    <AuthPanelCard>
-        <AuthSideHeader />
-        <div class="auth-heading">
-          <span>Hỗ trợ tài khoản</span>
-          <h2>Quên mật khẩu?</h2>
-          <p>Chúng tôi sẽ gửi liên kết đặt lại mật khẩu tới email của bạn.</p>
+    <div class="auth-card">
+      <div class="auth-card-scroll">
+        <div class="auth-brand">
+          <img class="auth-brand-img" src="/images/logo.png" alt="Logo" />
+          <div class="auth-brand-text">
+            ERIPT LMS
+            <small>University Name &amp; Logo</small>
+          </div>
         </div>
+
+        <div class="auth-heading">
+          <span>Khôi phục tài khoản</span>
+          <h2>Quên mật khẩu?</h2>
+          <p>Nhập email đã đăng ký, chúng tôi sẽ gửi liên kết đặt lại mật khẩu.</p>
+        </div>
+
+        <div v-if="error" class="notice">{{ error }}</div>
 
         <div v-if="sent" class="success-state">
           <i class="pi pi-envelope" />
@@ -54,19 +58,22 @@ async function submit() {
         </div>
 
         <template v-else>
-          <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
           <form class="auth-form" @submit.prevent="submit">
             <label>
               <span>Email</span>
-              <IconField>
-                <InputIcon class="pi pi-envelope" />
-                <InputText v-model="email" type="email" placeholder="name@example.com" autocomplete="email" fluid />
-              </IconField>
+              <span class="auth-field-uni">University Name</span>
+              <InputText v-model="email" type="email" placeholder="email@example.com" autocomplete="email" autoFocus />
+              <span class="auth-field-desc">Chúng tôi sẽ gửi hướng dẫn đặt lại mật khẩu tới địa chỉ này.</span>
             </label>
-            <Button type="submit" label="Gửi liên kết đặt lại" icon="pi pi-send" :loading="loading" fluid />
+            <Button type="submit" label="Gửi liên kết đặt lại" icon="pi pi-send" :loading="loading" />
           </form>
           <p class="auth-foot">Nhớ lại mật khẩu? <NuxtLink to="/login">Đăng nhập</NuxtLink></p>
         </template>
-    </AuthPanelCard>
+
+        <div class="auth-brand-footer">
+          <span>ERIPT LMS</span> · University Name &amp; Logo
+        </div>
+      </div>
+    </div>
   </div>
 </template>

@@ -13,7 +13,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="auth-shell">
-    <div class="auth-bg" aria-hidden="true" :style="{ backgroundImage: `linear-gradient(105deg, rgba(8, 18, 28, .78) 0%, rgba(8, 18, 28, .55) 48%, rgba(8, 18, 28, .42) 100%), url('${authImage}')` }" />
+    <div class="auth-bg" aria-hidden="true" :style="{ backgroundImage: `linear-gradient(105deg, rgba(8, 18, 28, .72) 0%, rgba(8, 18, 28, .52) 50%, rgba(8, 18, 28, .38) 100%), url('${authImage}')` }" />
     <main class="auth-content">
       <slot />
     </main>
@@ -31,7 +31,6 @@ onBeforeUnmount(() => {
 .auth-bg {
   position: absolute;
   inset: 0;
-  /* background-image comes from the inline :style (site-settings auth_page_image, or the default). */
   background-color: #0b1c24;
   background-position: center;
   background-size: cover;
@@ -44,8 +43,11 @@ onBeforeUnmount(() => {
   height: 100dvh;
   min-height: 100dvh;
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
+  padding: 24px;
+  box-sizing: border-box;
 }
 
 @media (max-width: 900px) {
@@ -54,6 +56,7 @@ onBeforeUnmount(() => {
     height: auto;
     min-height: 100dvh;
     overflow: visible;
+    padding: 16px;
   }
 }
 </style>
@@ -65,9 +68,6 @@ html.auth-lock-scroll body {
   overflow: hidden;
 }
 
-/* Small screens: let the page scroll normally so nothing (e.g. the
-   submit button, once the mobile keyboard opens) gets stranded
-   below the fold with no way to reach it. */
 @media (max-width: 900px) {
   html.auth-lock-scroll,
   html.auth-lock-scroll body {
